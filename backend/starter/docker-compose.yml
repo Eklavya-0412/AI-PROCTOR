@@ -1,0 +1,35 @@
+version: '3.8'
+services:
+  db:
+    image: mongo:7.0
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-password}
+      MONGO_INITDB_DATABASE: proctor
+    volumes:
+      - db_data:/data/db
+      - ./init-db.js:/docker-entrypoint-initdb.d/001_init-db.js:ro
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test -u $${MONGO_INITDB_ROOT_USERNAME} -p $${MONGO_INITDB_ROOT_PASSWORD}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    ports:
+      - "27017:27017"
+  app:
+    build:
+      context: ..
+      dockerfile: starter/Dockerfile
+    depends_on:
+      - db
+    environment:
+      - MONGODB_URI=${MONGODB_URI:-mongodb://admin:password@db:27017/proctor?authSource=admin}
+      - APP_ADDR=${APP_ADDR:-:4000}
+    ports:
+      - "4000:4000"
+    volumes:
+      - ../tls:/app/tls
+    restart: on-failure
+volumes:
+  db_data:
