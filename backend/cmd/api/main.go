@@ -15,6 +15,7 @@ import (
 	"github.com/go-playground/form/v4"
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/mongo"
+	"proctor/internal/logger"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -38,7 +39,19 @@ func main() {
 	if mongoURI == "" {
 		log.Fatal("FATAL: MONGODB_URI environment variable is not set")
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logFilePath := os.Getenv("LOG_FILE_PATH")
+	if logFilePath == "" {
+		logFilePath = "./logs/app.log"
+	}
+	logger, logFile, err := logger.New(logger.Config{
+		LogFilePath: logFilePath,
+		UseJSON:     true,
+		Level:       slog.LevelInfo,
+	})
+	if err != nil {
+		log.Fatal("Failed to initialize logger: ", err)
+	}
+	defer logFile.Close()
 	client, err := openMongoDB(mongoURI)
 	if err != nil {
 		logger.Error(err.Error())
