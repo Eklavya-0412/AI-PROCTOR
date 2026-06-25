@@ -22,7 +22,7 @@ type Exam struct {
 	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
 	ProblemSet []Problem          `bson:"problem_set" json:"problem_set"`
 }
-ExamSettings struct {
+type ExamSettings struct {
 	RequireCamera bool `bson:"require_camera" json:"require_camera"`
 	ReuquireMic bool `bson:"require_mic" json:"require_mic"`
 	BlockTabSwitching bool `bson:"block_tab_switching" json:"block_tab_switching"`
@@ -41,7 +41,6 @@ type TestCase struct {
 	IsHidden       bool   `bson:"is_hidden" json:"is_hidden"`
 }
 
-// Submission tracks the student's Docker compilation result and Viva score.
 type Submission struct {
 	ID              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	ExamID          primitive.ObjectID `bson:"exam_id" json:"exam_id"`
