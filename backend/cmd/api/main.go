@@ -15,8 +15,8 @@ import (
 	"github.com/go-playground/form/v4"
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/mongo"
-	"proctor/internal/logger"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"proctor/internal/logger"
 )
 
 type application struct {

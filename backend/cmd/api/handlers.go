@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"proctor/internal/models"
 	"proctor/internal/validator"
+	"fmt"
 )
 
 type userSignupForm struct {
@@ -101,4 +102,27 @@ func (app *application) userLogoutPost(w http.ResponseWriter, r *http.Request) {
 	app.sessionManager.Remove(r.Context(), "authenticatedUserID")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Logged out successfully"))
+}
+
+func (app *application) createExamHandler(w http.ResponseWriter, r *http.Request) {
+	// TODO: Parse JSON body, validate with Validator, insert into MongoDB
+	fmt.Fprintln(w, "Exam created successfully (Instructor only)")
+}
+
+// --- Student/Shared Handlers ---
+
+func (app *application) getExamsHandler(w http.ResponseWriter, r *http.Request) {
+	// TODO: Fetch exams from MongoDB. If role == Student, strip hidden test cases.
+	fmt.Fprintln(w, "List of available exams")
+}
+
+func (app *application) getExamByIDHandler(w http.ResponseWriter, r *http.Request) {
+	// TODO: Fetch single exam by ID
+	id := r.PathValue("id") // Assuming Go 1.22+ routing
+	fmt.Fprintf(w, "Details for exam %s\n", id)
+}
+
+func (app *application) submitCodeHandler(w http.ResponseWriter, r *http.Request) {
+	// TODO: Receive code, send to Docker Worker Queue, save initial submission to DB
+	fmt.Fprintln(w, "Code submitted for evaluation")
 }

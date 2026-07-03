@@ -6,27 +6,20 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-type User struct {
-	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Username  string             `bson:"username" json:"username"`
-	Email     string             `bson:"email" json:"email"`
-	Password  string             `bson:"password" json:"-"`
-	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
-}
 type Exam struct {
-	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	InstructorID primitive.ObjectID `bson:"instructor_id" json:"instructor_id"`
-	Title     string             `bson:"title" json:"title"`
+	ID              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	InstructorID    primitive.ObjectID `bson:"instructor_id" json:"instructor_id"`
+	Title           string             `bson:"title" json:"title"`
 	DurationMinutes int                `bson:"duration_minutes" json:"duration_minutes"`
-	Settings  ExamSettings       `bson:"settings" json:"settings"`
-	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
-	ProblemSet []Problem          `bson:"problem_set" json:"problem_set"`
+	Settings        ExamSettings       `bson:"settings" json:"settings"`
+	CreatedAt       time.Time          `bson:"created_at" json:"created_at"`
+	ProblemSet      []Problem          `bson:"problem_set" json:"problem_set"`
 }
 type ExamSettings struct {
-	RequireCamera bool `bson:"require_camera" json:"require_camera"`
-	ReuquireMic bool `bson:"require_mic" json:"require_mic"`
+	RequireCamera     bool `bson:"require_camera" json:"require_camera"`
+	ReuquireMic       bool `bson:"require_mic" json:"require_mic"`
 	BlockTabSwitching bool `bson:"block_tab_switching" json:"block_tab_switching"`
-	BlockCopyPaste bool `bson:"block_copy_paste" json:"block_copy_paste"`
+	BlockCopyPaste    bool `bson:"block_copy_paste" json:"block_copy_paste"`
 }
 type Problem struct {
 	ProblemID        string     `bson:"problem_id" json:"problem_id"`

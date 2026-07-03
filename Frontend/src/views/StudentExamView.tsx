@@ -1,5 +1,3 @@
-import React from 'react';
-
 export default function StudentExamView() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-950 text-white">
