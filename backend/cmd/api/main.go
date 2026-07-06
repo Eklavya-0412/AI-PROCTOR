@@ -20,10 +20,12 @@ import (
 )
 
 type application struct {
-	logger         *slog.Logger
-	users          *models.UserModel
-	formDecoder    *form.Decoder
-	sessionManager *scs.SessionManager
+    logger         *slog.Logger
+    users          *models.UserModel
+    exams          *models.ExamModel       
+    submissions    *models.SubmissionModel 
+    formDecoder    *form.Decoder
+    sessionManager *scs.SessionManager
 }
 
 func main() {
@@ -67,6 +69,8 @@ func main() {
 	app := &application{
 		logger:         logger,
 		users:          models.NewUserModel(client),
+		exams:          models.NewExamModel(client),       
+    	submissions:    models.NewSubmissionModel(client),
 		formDecoder:    formDecoder,
 		sessionManager: sessionManager,
 	}

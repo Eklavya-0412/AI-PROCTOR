@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"proctor/internal/models"
 	"proctor/internal/validator"
-	"fmt"
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type userSignupForm struct {
@@ -104,25 +107,158 @@ func (app *application) userLogoutPost(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Logged out successfully"))
 }
 
+// EXAM AND SUBMISSIONS 
+
 func (app *application) createExamHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: Parse JSON body, validate with Validator, insert into MongoDB
-	fmt.Fprintln(w, "Exam created successfully (Instructor only)")
+	var input struct {
+		Title           string                `json:"title"`
+		DurationMinutes int                   `json:"duration_minutes"`
+		Settings        models.ExamSettings   `json:"settings"`
+		ProblemSet      []models.Problem      `json:"problem_set"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&input)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	// In a real scenario, extract InstructorID from session/JWT. 
+	// For now, generating a new ObjectID to satisfy the schema.
+	instructorID := primitive.NewObjectID() 
+
+	exam := models.Exam{
+		InstructorID:    instructorID,
+		Title:           input.Title,
+		DurationMinutes: input.DurationMinutes,
+		Settings:        input.Settings,
+		ProblemSet:      input.ProblemSet,
+		CreatedAt:       time.Now(),
+	}
+
+	// Assuming app.exams.Insert is implemented in your models package
+	result, err := app.exams.Insert(exam)
+	if err != nil {
+		app.serverError(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Exam created successfully",
+		"exam_id": result.InsertedID,
+	})
 }
 
-// --- Student/Shared Handlers ---
-
 func (app *application) getExamsHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: Fetch exams from MongoDB. If role == Student, strip hidden test cases.
-	fmt.Fprintln(w, "List of available exams")
+	exams, err := app.exams.GetAll()
+	if err != nil {
+		app.serverError(w, r, err)
+		return
+	}
+
+	// Extract the mock role from the context to determine if we should hide test cases
+	role, ok := r.Context().Value(roleKey).(string)
+	
+	// Strip hidden test cases for students
+	if ok && role == "Student" {
+		for i := range exams {
+			for j := range exams[i].ProblemSet {
+				var visibleCases []models.TestCase
+				for _, tc := range exams[i].ProblemSet[j].TestCases {
+					if !tc.IsHidden {
+						visibleCases = append(visibleCases, tc)
+					}
+				}
+				exams[i].ProblemSet[j].TestCases = visibleCases
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(exams)
 }
 
 func (app *application) getExamByIDHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: Fetch single exam by ID
-	id := r.PathValue("id") // Assuming Go 1.22+ routing
-	fmt.Fprintf(w, "Details for exam %s\n", id)
+	idParam := r.PathValue("id")
+	
+	objID, err := primitive.ObjectIDFromHex(idParam)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	exam, err := app.exams.GetByID(objID)
+	if err != nil {
+		app.clientError(w, http.StatusNotFound)
+		return
+	}
+
+	// Security: Strip hidden test cases for students
+	role, ok := r.Context().Value(roleKey).(string)
+	if ok && role == "Student" {
+		for j := range exam.ProblemSet {
+			var visibleCases []models.TestCase
+			for _, tc := range exam.ProblemSet[j].TestCases {
+				if !tc.IsHidden {
+					visibleCases = append(visibleCases, tc)
+				}
+			}
+			exam.ProblemSet[j].TestCases = visibleCases
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(exam)
 }
 
 func (app *application) submitCodeHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: Receive code, send to Docker Worker Queue, save initial submission to DB
-	fmt.Fprintln(w, "Code submitted for evaluation")
+	var input struct {
+		ExamID    string `json:"exam_id"`
+		ProblemID string `json:"problem_id"`
+		Language  string `json:"language"`
+		RawCode   string `json:"raw_code"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&input)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	examObjID, err := primitive.ObjectIDFromHex(input.ExamID)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	// Mock Student ID for now. Swap with real session/JWT ID later.
+	studentID := primitive.NewObjectID()
+
+	submission := models.Submission{
+		ExamID:      examObjID,
+		StudentID:   studentID,
+		ProblemID:   input.ProblemID,
+		Language:    input.Language,
+		RawCode:     input.RawCode,
+		Status:      "Pending Execution",
+		SubmittedAt: time.Now(),
+	}
+
+	// 1. Save initial submission to DB
+	result, err := app.submissions.Insert(submission)
+	if err != nil {
+		app.serverError(w, r, err)
+		return
+	}
+
+	// 2. TODO: Push submission.ID and Code to the Docker Worker Queue channel here
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":       "Code submitted for evaluation",
+		"submission_id": result.InsertedID,
+	})
 }

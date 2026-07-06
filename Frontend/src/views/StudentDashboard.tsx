@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { apiCall } from '../lib/api';
 
-// --- MOCK DATA ---
-const UPCOMING_EXAMS = [
-  { id: 'ex-101', title: 'Data Structures Midterm', date: 'Oct 24, 2026', time: '10:00 AM', duration: '120 min' },
-  { id: 'ex-102', title: 'Algorithm Design Analysis', date: 'Oct 28, 2026', time: '2:00 PM', duration: '90 min' },
-];
+interface Exam {
+  id: string;
+  title: string;
+  duration_minutes: number;
+  created_at: string; 
+}
+
 
 const PAST_RESULTS = [
   { id: 'ex-099', title: 'Intro to Go Routines', score: '95/100', status: 'Passed', date: 'Sep 15, 2026' },
@@ -19,10 +22,27 @@ const STATS = {
   globalRank: 104,
 };
 
-// --- MAIN COMPONENT ---
+
 export default function StudentDashboard() {
   const [activeTab, setActiveTab] = useState<'upcoming' | 'past' | 'stats'>('upcoming');
+  const [upcomingExams, setUpcomingExams] = useState<Exam[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
+
+  useEffect(() => {
+    
+    apiCall<Exam[]>('/exams', { method: 'GET' })
+      .then((data) => {
+        setUpcomingExams(data);
+        setIsLoading(false);
+      })
+      .catch((err) => {
+        console.error("Error fetching exams:", err);
+        setError("Failed to load upcoming exams.");
+        setIsLoading(false);
+      });
+  }, []);
   return (
     <div className="flex min-h-screen bg-zinc-950 text-zinc-300 font-sans selection:bg-primary selection:text-white">
       
@@ -46,21 +66,30 @@ export default function StudentDashboard() {
         {/* Dynamic Content Body */}
         <div className="p-10 max-w-5xl">
           
-          {/* TAB: UPCOMING EXAMS */}
           {activeTab === 'upcoming' && (
             <div className="grid gap-6">
-              {UPCOMING_EXAMS.map(exam => (
+              {isLoading && <div className="text-zinc-500 animate-pulse">Loading exams from server...</div>}
+              {error && <div className="text-red-500 bg-red-500/10 p-4 rounded-lg border border-red-500/20">{error}</div>}
+              
+              {!isLoading && !error && upcomingExams.length === 0 && (
+                <div className="text-zinc-500 bg-zinc-900 p-6 rounded-xl border border-zinc-800 text-center">
+                  No upcoming exams scheduled at this time.
+                </div>
+              )}
+
+              {!isLoading && !error && upcomingExams.map(exam => (
                 <div key={exam.id} className="group bg-zinc-900 border border-zinc-800 p-6 rounded-xl hover:border-primary/50 transition-all duration-300 flex items-center justify-between">
                   <div>
                     <h3 className="text-xl font-semibold text-zinc-100 group-hover:text-primary transition-colors">{exam.title}</h3>
                     <div className="flex gap-4 mt-2 text-sm text-zinc-500">
                       <span className="flex items-center gap-1">
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                        {exam.date}
+                        {/* Formatting the Go time.Time string cleanly */}
+                        {new Date(exam.created_at).toLocaleDateString()}
                       </span>
                       <span className="flex items-center gap-1">
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        {exam.time} ({exam.duration})
+                        Duration: {exam.duration_minutes} min
                       </span>
                     </div>
                   </div>

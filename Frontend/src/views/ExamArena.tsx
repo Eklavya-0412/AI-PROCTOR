@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
+import { apiCall } from '../lib/api';
 
 // TF
 import * as tf from '@tensorflow/tfjs';
@@ -14,7 +15,7 @@ import { FACE_DETECTION_CONFIG, AUDIO_DETECTION_CONFIG } from '../lib/proctorCon
 export default function ExamArena() {
   const { id } = useParams();
   const navigate = useNavigate();
-  
+  const [isSubmitting, setIsSubmitting] = useState(false); 
   const [language, setLanguage] = useState('python');
   const [code, setCode] = useState('# Implement your algorithm here\n');
   const [warnings, setWarnings] = useState(0);
@@ -69,8 +70,9 @@ export default function ExamArena() {
 
         // Face Landmarks
         const model = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
-        const detectorConfig = {
+        const detectorConfig: faceLandmarksDetection.MediaPipeFaceMeshTfjsModelConfig = {
           runtime: 'tfjs' as const,
+          refineLandmarks: false,
         };
         detectorRef.current = await faceLandmarksDetection.createDetector(model, detectorConfig);
 
@@ -84,7 +86,7 @@ export default function ExamArena() {
         setIsModelLoading(false);
 
         // Audio Listening Loop
-        recognizerRef.current.listen(result => {
+        recognizerRef.current.listen(async (result: any) => {
 
           const isSpeaking = result.scores.some(score => score > AUDIO_DETECTION_CONFIG.probabilityThreshold);
           if (isSpeaking) {
@@ -135,11 +137,59 @@ export default function ExamArena() {
       }
     };
   }, []);
+  
+  const [examData, setExamData] = useState<any>(null);
+  const [isLoadingExam, setIsLoadingExam] = useState(true);
 
-  const handleSubmit = () => {
-    alert('Code submitted! Warnings logged: ' + warnings);
+  useEffect(() => {
+    if (!id) return;
+    
+    // Fetch the specific exam by its ID
+    apiCall(`/exams/${id}`, { method: 'GET' })
+      .then((data: any) => {
+        setExamData(data);
+        setIsLoadingExam(false);
+      })
+      .catch((err) => {
+        console.error("Failed to load exam data", err);
+        setIsLoadingExam(false);
+      });
+  }, [id]);
 
-  };
+  const handleSubmit = async () => {
+      if (!id) {
+        alert("Error: Missing Exam ID in URL");
+        return;
+      }
+
+      setIsSubmitting(true);
+
+      
+      const payload = {
+        exam_id: id,                  
+        problem_id: "prob-default-1", 
+        language: language,         
+        raw_code: code                
+      };
+
+      try {
+        const response = await apiCall('/submissions', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+
+        console.log("Submission success:", response);
+        alert('Code submitted successfully! Awaiting Docker evaluation...');
+        
+        navigate('/student');
+
+      } catch (error) {
+        console.error("Submission failed:", error);
+        alert('Error: Failed to submit code. Check network or console.');
+      } finally {
+        setIsSubmitting(false);
+      }
+    };
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-300 font-sans">
@@ -175,47 +225,36 @@ export default function ExamArena() {
           </button>
           <button 
             onClick={handleSubmit}
-            className="text-sm font-medium bg-primary text-zinc-950 px-4 py-2 rounded-md hover:bg-primaryHover transition-colors"
+            disabled={isSubmitting}
+            className="text-sm font-medium bg-primary text-zinc-950 px-4 py-2 rounded-md hover:bg-primaryHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Submit Code
+            {isSubmitting ? 'Submitting...' : 'Submit Code'}
           </button>
         </div>
       </header>
 
       {/* Main Arena Layout */}
       <div className="flex flex-1 overflow-hidden">
-        
-        {/* Left Pane: Problem Description & Webcam */}
+         {/* Left Pane: Problem Statement */}
         <div className="w-[35%] border-r border-zinc-800 p-6 overflow-y-auto bg-zinc-950 flex flex-col justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-zinc-100 mb-4">Merge k Sorted Lists</h2>
-            <div className="prose prose-invert prose-zinc text-sm text-zinc-400">
-              <p>You are given an array of <code>k</code> linked-lists <code>lists</code>, each linked-list is sorted in ascending order.</p>
-              <p>Merge all the linked-lists into one sorted linked-list and return it.</p>
-              
-              <h3 className="text-zinc-200 mt-4 font-semibold">Example 1:</h3>
-              <pre className="bg-zinc-900 p-3 rounded border border-zinc-800 mt-2 text-xs font-mono">
-Input: lists = [[1,4,5],[1,3,4],[2,6]]<br/>
-Output: [1,1,2,3,4,4,5,6]<br/>
-Explanation: The linked-lists are:<br/>
-[<br/>
-  1-&gt;4-&gt;5,<br/>
-  1-&gt;3-&gt;4,<br/>
-  2-&gt;6<br/>
-]<br/>
-merging them into one sorted list:<br/>
-1-&gt;1-&gt;2-&gt;3-&gt;4-&gt;4-&gt;5-&gt;6
-              </pre>
-              
-              <p className="mt-4"><strong>Constraints:</strong></p>
-              <ul className="list-disc pl-5">
-                <li><code>k == lists.length</code></li>
-                <li><code>0 &lt;= k &lt;= 10^4</code></li>
-                <li><code>0 &lt;= lists[i].length &lt;= 500</code></li>
-              </ul>
-            </div>
+            {isLoadingExam ? (
+              <div className="animate-pulse text-zinc-500">Loading problem set...</div>
+            ) : !examData || !examData.problem_set || examData.problem_set.length === 0 ? (
+              <div className="text-red-500">Error: No problems found for this exam.</div>
+            ) : (
+              <>
+                <h2 className="text-2xl font-bold text-zinc-100 mb-4">
+                  {examData.problem_set[0].title}
+                </h2>
+                <div className="prose prose-invert prose-zinc text-sm text-zinc-400">
+                  <p>{examData.problem_set[0].description}</p>
+                </div>
+              </>
+            )}
           </div>
-
+          
+          {/* Keep your existing locked webcam feed div exactly as it is here */}
           {/* Locked Webcam Feed */}
           <div className="mt-6 border border-zinc-800 rounded-lg overflow-hidden bg-zinc-900 flex-shrink-0 relative">
             <div className="absolute top-2 left-2 z-10 bg-black/60 px-2 py-1 rounded text-[10px] uppercase font-bold text-zinc-300 tracking-wider flex items-center gap-2 border border-white/10">

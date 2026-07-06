@@ -1,9 +1,12 @@
 package models
 
 import (
+	"context"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 type Exam struct {
@@ -15,12 +18,14 @@ type Exam struct {
 	CreatedAt       time.Time          `bson:"created_at" json:"created_at"`
 	ProblemSet      []Problem          `bson:"problem_set" json:"problem_set"`
 }
+
 type ExamSettings struct {
 	RequireCamera     bool `bson:"require_camera" json:"require_camera"`
-	ReuquireMic       bool `bson:"require_mic" json:"require_mic"`
+	RequireMic        bool `bson:"require_mic" json:"require_mic"` 
 	BlockTabSwitching bool `bson:"block_tab_switching" json:"block_tab_switching"`
 	BlockCopyPaste    bool `bson:"block_copy_paste" json:"block_copy_paste"`
 }
+
 type Problem struct {
 	ProblemID        string     `bson:"problem_id" json:"problem_id"`
 	Title            string     `bson:"title" json:"title"`
@@ -28,6 +33,7 @@ type Problem struct {
 	AllowedLanguages []string   `bson:"allowed_languages" json:"allowed_languages"`
 	TestCases        []TestCase `bson:"test_cases" json:"test_cases"`
 }
+
 type TestCase struct {
 	Input          string `bson:"input" json:"input"`
 	ExpectedOutput string `bson:"expected_output" json:"expected_output"`
@@ -60,4 +66,65 @@ type TelemetryLog struct {
 	InfractionType string             `bson:"infraction_type" json:"infraction_type"`
 	Severity       string             `bson:"severity" json:"severity"`
 	Timestamp      time.Time          `bson:"timestamp" json:"timestamp"`
+}
+
+// DATABASE METHODS (MODEL WRAPPERS)
+
+type ExamModel struct {
+	collection *mongo.Collection
+}
+
+func NewExamModel(client *mongo.Client) *ExamModel {
+	return &ExamModel{
+		collection: client.Database("proctor").Collection("exams"),
+	}
+}
+
+func (m *ExamModel) Insert(exam Exam) (*mongo.InsertOneResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return m.collection.InsertOne(ctx, exam)
+}
+
+func (m *ExamModel) GetAll() ([]Exam, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cursor, err := m.collection.Find(ctx, bson.M{})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var exams []Exam
+	if err = cursor.All(ctx, &exams); err != nil {
+		return nil, err
+	}
+	return exams, nil
+}
+
+func (m *ExamModel) GetByID(id primitive.ObjectID) (Exam, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var exam Exam
+	err := m.collection.FindOne(ctx, bson.M{"_id": id}).Decode(&exam)
+	return exam, err
+}
+
+// --- Submission Model ---
+type SubmissionModel struct {
+	collection *mongo.Collection
+}
+
+func NewSubmissionModel(client *mongo.Client) *SubmissionModel {
+	return &SubmissionModel{
+		collection: client.Database("proctor").Collection("submissions"),
+	}
+}
+
+func (m *SubmissionModel) Insert(sub Submission) (*mongo.InsertOneResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return m.collection.InsertOne(ctx, sub)
 }
