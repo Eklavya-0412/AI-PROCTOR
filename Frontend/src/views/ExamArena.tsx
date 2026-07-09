@@ -15,19 +15,28 @@ import { FACE_DETECTION_CONFIG, AUDIO_DETECTION_CONFIG } from '../lib/proctorCon
 export default function ExamArena() {
   const { id } = useParams();
   const navigate = useNavigate();
+  
   const [isSubmitting, setIsSubmitting] = useState(false); 
   const [language, setLanguage] = useState('python');
   const [code, setCode] = useState('# Implement your algorithm here\n');
   const [warnings, setWarnings] = useState(0);
   const [isModelLoading, setIsModelLoading] = useState(true);
   
+  const [submissionId, setSubmissionId] = useState<string | null>(null);
+  const [evalStatus, setEvalStatus] = useState<string | null>(null);
+  const [executionTime, setExecutionTime] = useState<number>(0);
+  
   const videoRef = useRef<HTMLVideoElement>(null);
   const detectorRef = useRef<faceLandmarksDetection.FaceLandmarksDetector | null>(null);
   const recognizerRef = useRef<speechCommands.SpeechCommandRecognizer | null>(null);
   const proctorLoopRef = useRef<number | null>(null);
+  
+  const [examData, setExamData] = useState<any>(null);
+  const [isLoadingExam, setIsLoadingExam] = useState(true);
 
+  // ==========================================
   // UI Lockdowns
-
+  // ==========================================
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
@@ -54,12 +63,12 @@ export default function ExamArena() {
     e.preventDefault();
   };
 
+  // ==========================================
   // INITIALIZE CAMERA & TFJS MODELS
-
+  // ==========================================
   useEffect(() => {
     const startProctoring = async () => {
       try {
-        // WebGL 
         await tf.setBackend('webgl');
         await tf.ready();
 
@@ -68,15 +77,13 @@ export default function ExamArena() {
           videoRef.current.srcObject = stream;
         }
 
-        // Face Landmarks
         const model = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
         const detectorConfig: faceLandmarksDetection.MediaPipeFaceMeshTfjsModelConfig = {
-          runtime: 'tfjs' as const,
+          runtime: 'tfjs',
           refineLandmarks: false,
         };
         detectorRef.current = await faceLandmarksDetection.createDetector(model, detectorConfig);
 
-        //Speech Commands Model
         recognizerRef.current = speechCommands.create(
           'BROWSER_FFT', 
           AUDIO_DETECTION_CONFIG.vocabulary
@@ -85,10 +92,8 @@ export default function ExamArena() {
 
         setIsModelLoading(false);
 
-        // Audio Listening Loop
         recognizerRef.current.listen(async (result: any) => {
-
-          const isSpeaking = result.scores.some(score => score > AUDIO_DETECTION_CONFIG.probabilityThreshold);
+          const isSpeaking = result.scores.some((score:any) => score > AUDIO_DETECTION_CONFIG.probabilityThreshold);
           if (isSpeaking) {
             console.warn('Infraction Logged: Speech detected in background.');
             setWarnings(w => w + 1);
@@ -100,24 +105,64 @@ export default function ExamArena() {
           overlapFactor: AUDIO_DETECTION_CONFIG.overlapFactor 
         });
 
-        //Video Processing Loop
+        const calculateHeadPose = (keypoints: any[]) => {
+          const NOSE_TIP = keypoints[1];
+          const LEFT_CHEEK = keypoints[234];  
+          const RIGHT_CHEEK = keypoints[454]; 
+          const TOP_HEAD = keypoints[10];     
+          const BOTTOM_CHIN = keypoints[152]; 
+
+          const faceWidth = RIGHT_CHEEK.x - LEFT_CHEEK.x;
+          const noseToLeft = NOSE_TIP.x - LEFT_CHEEK.x;
+          const yawRatio = noseToLeft / faceWidth; 
+          const estimatedYawDegrees = Math.abs((yawRatio - 0.5) * 200);
+
+          const faceHeight = BOTTOM_CHIN.y - TOP_HEAD.y;
+          const noseToTop = NOSE_TIP.y - TOP_HEAD.y;
+          const pitchRatio = noseToTop / faceHeight;
+          const estimatedPitchDegrees = Math.abs((pitchRatio - 0.5) * 200);
+
+          return { estimatedYawDegrees, estimatedPitchDegrees };
+        };
 
         const detectFace = async () => {
           if (videoRef.current && videoRef.current.readyState === 4 && detectorRef.current) {
-            const faces = await detectorRef.current.estimateFaces(videoRef.current);
+            const estimationConfig = { flipHorizontal: false, staticImageMode: false };
+            const faces = await detectorRef.current.estimateFaces(videoRef.current, estimationConfig);
             
             if (faces.length === 0) {
               console.warn('Infraction Logged: No face detected in frame.');
               setWarnings(w => w + 1);
-            } else if (faces.length > FACE_DETECTION_CONFIG.allowedFaces) {
+              return;
+            } 
+            
+            if (faces.length > FACE_DETECTION_CONFIG.allowedFaces) {
               console.warn(`Infraction Logged: Multiple faces (${faces.length}) detected.`);
               setWarnings(w => w + 1);
+              return;
             }
-            // Additional logic for gaze tracking (calculating iris position relative to eye corners) can be extracted from `faces[0].keypoints` here.
+
+            const primaryFace = faces[0];
+            
+            if (primaryFace.box) {
+              // @ts-ignore
+              if (primaryFace.box.probability[0] < FACE_DETECTION_CONFIG.minDetectionConfidence) return; 
+            }
+
+            const { estimatedYawDegrees, estimatedPitchDegrees } = calculateHeadPose(primaryFace.keypoints);
+
+            if (estimatedYawDegrees > FACE_DETECTION_CONFIG.maxHeadYawDegrees) {
+              console.warn(`Infraction Logged: User looking away (Yaw: ${Math.round(estimatedYawDegrees)}°)`);
+              setWarnings(w => w + 1);
+            }
+
+            if (estimatedPitchDegrees > FACE_DETECTION_CONFIG.maxHeadPitchDegrees) {
+              console.warn(`Infraction Logged: User looking down/up (Pitch: ${Math.round(estimatedPitchDegrees)}°)`);
+              setWarnings(w => w + 1);
+            }
           }
         };
 
-        // Run face detection on the interval defined in your config
         proctorLoopRef.current = window.setInterval(detectFace, FACE_DETECTION_CONFIG.checkIntervalMs);
 
       } catch (err) {
@@ -127,7 +172,6 @@ export default function ExamArena() {
 
     startProctoring();
 
-    // Cleanup: Stop ML loops and Camera on unmount
     return () => {
       if (proctorLoopRef.current) clearInterval(proctorLoopRef.current);
       if (recognizerRef.current?.isListening()) recognizerRef.current.stopListening();
@@ -138,13 +182,11 @@ export default function ExamArena() {
     };
   }, []);
   
-  const [examData, setExamData] = useState<any>(null);
-  const [isLoadingExam, setIsLoadingExam] = useState(true);
-
+  // ==========================================
+  // EXAM DATA FETCHING
+  // ==========================================
   useEffect(() => {
     if (!id) return;
-    
-    // Fetch the specific exam by its ID
     apiCall(`/exams/${id}`, { method: 'GET' })
       .then((data: any) => {
         setExamData(data);
@@ -156,40 +198,68 @@ export default function ExamArena() {
       });
   }, [id]);
 
+  // ==========================================
+  // HTTP POLLING ENGINE (NEW)
+  // ==========================================
+  useEffect(() => {
+    let interval: number;
+
+    if (submissionId && (evalStatus === 'Judging...' || evalStatus === 'Pending Execution')) {
+      interval = window.setInterval(async () => {
+        try {
+          const data = await apiCall<any>(`/submissions/${submissionId}`, { method: 'GET' });
+          
+          if (data.status !== 'Pending Execution') {
+            setEvalStatus(data.status);
+            setExecutionTime(data.execution_time_ms);
+            clearInterval(interval);
+          }
+        } catch (err) {
+          console.error("Polling error:", err);
+          clearInterval(interval);
+        }
+      }, 1500); 
+    }
+
+    return () => clearInterval(interval);
+  }, [submissionId, evalStatus]);
+
+  // ==========================================
+  // HANDLERS
+  // ==========================================
   const handleSubmit = async () => {
-      if (!id) {
-        alert("Error: Missing Exam ID in URL");
-        return;
-      }
+    if (!id) {
+      alert("Error: Missing Exam ID in URL");
+      return;
+    }
 
-      setIsSubmitting(true);
-
-      
-      const payload = {
-        exam_id: id,                  
-        problem_id: "prob-default-1", 
-        language: language,         
-        raw_code: code                
-      };
-
-      try {
-        const response = await apiCall('/submissions', {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        });
-
-        console.log("Submission success:", response);
-        alert('Code submitted successfully! Awaiting Docker evaluation...');
-        
-        navigate('/student');
-
-      } catch (error) {
-        console.error("Submission failed:", error);
-        alert('Error: Failed to submit code. Check network or console.');
-      } finally {
-        setIsSubmitting(false);
-      }
+    setIsSubmitting(true);
+    
+    const payload = {
+      exam_id: id,                  
+      problem_id: "prob-default-1", 
+      language: language,           
+      raw_code: code                
     };
+
+    try {
+      // 1. Post the code
+      const response = await apiCall<{ submission_id: string }>('/submissions', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      // 2. Start the Polling Engine instead of navigating away
+      setSubmissionId(response.submission_id);
+      setEvalStatus('Judging...');
+
+    } catch (error) {
+      console.error("Submission failed:", error);
+      alert('Error: Failed to submit code. Check network or console.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-zinc-300 font-sans">
@@ -225,7 +295,7 @@ export default function ExamArena() {
           </button>
           <button 
             onClick={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isSubmitting || evalStatus === 'Judging...'}
             className="text-sm font-medium bg-primary text-zinc-950 px-4 py-2 rounded-md hover:bg-primaryHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSubmitting ? 'Submitting...' : 'Submit Code'}
@@ -254,7 +324,6 @@ export default function ExamArena() {
             )}
           </div>
           
-          {/* Keep your existing locked webcam feed div exactly as it is here */}
           {/* Locked Webcam Feed */}
           <div className="mt-6 border border-zinc-800 rounded-lg overflow-hidden bg-zinc-900 flex-shrink-0 relative">
             <div className="absolute top-2 left-2 z-10 bg-black/60 px-2 py-1 rounded text-[10px] uppercase font-bold text-zinc-300 tracking-wider flex items-center gap-2 border border-white/10">
@@ -271,7 +340,7 @@ export default function ExamArena() {
           </div>
         </div>
 
-        {/* Right Pane: Code Editor */}
+        {/* Right Pane: Code Editor & Results Console */}
         <div className="flex-1 flex flex-col bg-[#1e1e1e]">
           <div className="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-zinc-800">
             <select 
@@ -308,6 +377,50 @@ export default function ExamArena() {
               }}
             />
           </div>
+
+          {/* ========================================== */}
+          {/* RESULTS CONSOLE (NEW) */}
+          {/* ========================================== */}
+          {evalStatus && (
+            <div className="h-48 bg-zinc-950 border-t border-zinc-800 p-4 font-mono overflow-y-auto">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-zinc-400 text-sm font-bold uppercase tracking-wider">Execution Console</span>
+                <button onClick={() => setEvalStatus(null)} className="text-zinc-500 hover:text-zinc-300">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+
+              {evalStatus === 'Judging...' || evalStatus === 'Pending Execution' ? (
+                <div className="flex items-center gap-3 text-zinc-300 mt-4">
+                  <svg className="w-5 h-5 animate-spin text-primary" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  Running against hidden test cases...
+                </div>
+              ) : (
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center gap-2 text-xl font-bold">
+                    Status: 
+                    <span className={
+                      evalStatus === 'Accepted' ? 'text-green-500' : 
+                      evalStatus === 'Time Limit Exceeded' ? 'text-yellow-500' : 'text-red-500'
+                    }>
+                      {evalStatus}
+                    </span>
+                  </div>
+                  {evalStatus === 'Accepted' && (
+                    <div className="text-zinc-400 text-sm">
+                      Runtime: <span className="text-zinc-200 font-semibold">{executionTime} ms</span> 
+                    </div>
+                  )}
+                  {evalStatus !== 'Accepted' && (
+                    <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded text-sm mt-2">
+                      Your solution failed to produce the expected output or crashed during execution. Please review your code constraints.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
         </div>
       </div>
     </div>

@@ -1,29 +1,16 @@
-const BASE_URL = 'http://localhost:4000/api';
+const BASE_URL = 'https://localhost:4000/api';
+
 export async function apiCall<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const storedUser = localStorage.getItem('mock_user');
-    const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-    if (storedUser) {
-        try {
-        const parsedUser = JSON.parse(storedUser);
-        headers['X-Mock-User-ID'] = parsedUser.id;
-        headers['X-Mock-Role'] = parsedUser.role;
-        } 
-        catch (e) {
-        console.error("Failed to parse mock_user from localStorage", e);
-        }
-    }
-    const config: RequestInit = {
+  const config: RequestInit = {
     ...options,
+    credentials: 'include', // <-- CRITICAL: Sends the HttpOnly cookie to Go
     headers: {
-      ...headers,
+      'Content-Type': 'application/json',
       ...options.headers,
     },  
-    };
+  };
 
-    try {
-
+  try {
     const response = await fetch(`${BASE_URL}${endpoint}`, config);
 
     if (!response.ok) {
@@ -38,8 +25,7 @@ export async function apiCall<T>(endpoint: string, options: RequestInit = {}): P
     
     return null as unknown as T;
 
-  } 
-  catch (error) {
+  } catch (error) {
     console.error(`[API Client] Request failed for ${endpoint}:`, error);
     throw error;
   }

@@ -31,14 +31,20 @@ export default function StudentDashboard() {
 
 
   useEffect(() => {
-    
-    apiCall<Exam[]>('/exams', { method: 'GET' })
+    apiCall<any>('/exams', { method: 'GET' })
       .then((data) => {
-        setUpcomingExams(data);
+        console.log("Antigravity Check - API Payload:", data); // Watch this in your F12 console
+        
+        // 1. Force the data into an array, no matter what garbage the API sends
+        const safeExams = Array.isArray(data) ? data : [];
+        
+        // 2. Set the state with the guaranteed array
+        setUpcomingExams(safeExams);
         setIsLoading(false);
       })
       .catch((err) => {
         console.error("Error fetching exams:", err);
+        setUpcomingExams([]); // 3. Fallback to empty array on network failure
         setError("Failed to load upcoming exams.");
         setIsLoading(false);
       });

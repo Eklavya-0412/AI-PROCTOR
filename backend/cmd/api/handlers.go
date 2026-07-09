@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"proctor/internal/models"
+	"proctor/internal/sandbox"
 	"proctor/internal/validator"
+	"strings"
 	"time"
+
+	"fmt"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -55,6 +60,12 @@ type userLoginForm struct {
 	Email               string `form:"email"`
 	Password            string `form:"password"`
 	validator.Validator `form:"-"`
+}
+type LRUserProfile struct {
+	Uid          string `json:"Uid"`
+	CustomFields struct {
+		Role string `json:"role"`
+	} `json:"CustomFields"`
 }
 
 func (app *application) userLoginPost(w http.ResponseWriter, r *http.Request) {
@@ -107,25 +118,29 @@ func (app *application) userLogoutPost(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Logged out successfully"))
 }
 
-// EXAM AND SUBMISSIONS 
+// EXAM AND SUBMISSIONS
 
 func (app *application) createExamHandler(w http.ResponseWriter, r *http.Request) {
+
+	fmt.Println("--- HIT CREATE EXAM HANDLER ---")
+
 	var input struct {
-		Title           string                `json:"title"`
-		DurationMinutes int                   `json:"duration_minutes"`
-		Settings        models.ExamSettings   `json:"settings"`
-		ProblemSet      []models.Problem      `json:"problem_set"`
+		Title           string              `json:"title"`
+		DurationMinutes int                 `json:"duration_minutes"`
+		Settings        models.ExamSettings `json:"settings"`
+		ProblemSet      []models.Problem    `json:"problem_set"`
 	}
 
 	err := json.NewDecoder(r.Body).Decode(&input)
 	if err != nil {
+		fmt.Println("JSON DECODE ERROR:", err)
 		app.clientError(w, http.StatusBadRequest)
 		return
 	}
 
-	// In a real scenario, extract InstructorID from session/JWT. 
+	// In a real scenario, extract InstructorID from session/JWT.
 	// For now, generating a new ObjectID to satisfy the schema.
-	instructorID := primitive.NewObjectID() 
+	instructorID := primitive.NewObjectID()
 
 	exam := models.Exam{
 		InstructorID:    instructorID,
@@ -160,7 +175,7 @@ func (app *application) getExamsHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Extract the mock role from the context to determine if we should hide test cases
 	role, ok := r.Context().Value(roleKey).(string)
-	
+
 	// Strip hidden test cases for students
 	if ok && role == "Student" {
 		for i := range exams {
@@ -182,7 +197,7 @@ func (app *application) getExamsHandler(w http.ResponseWriter, r *http.Request) 
 
 func (app *application) getExamByIDHandler(w http.ResponseWriter, r *http.Request) {
 	idParam := r.PathValue("id")
-	
+
 	objID, err := primitive.ObjectIDFromHex(idParam)
 	if err != nil {
 		app.clientError(w, http.StatusBadRequest)
@@ -260,5 +275,153 @@ func (app *application) submitCodeHandler(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message":       "Code submitted for evaluation",
 		"submission_id": result.InsertedID,
+	})
+	go func(subID primitive.ObjectID, code string) {
+		app.logger.Info("Starting Docker sandbox for submission", "id", subID.Hex())
+
+		// hardcode python for now
+		execResult, err := sandbox.RunPythonCode(code, "")
+		if err != nil {
+			app.logger.Error("Sandbox execution failed critically", "error", err)
+			return
+		}
+
+		app.logger.Info("Sandbox finished", "status", execResult.Status, "timeMs", execResult.ExecutionTimeMs)
+
+		// Determine the final grade based on the container exit status
+		finalGrade := "Wrong Answer"
+		if execResult.Status == "Success" {
+			// TODO: Here you would compare execResult.Output against the problem's ExpectedOutput
+			finalGrade = "Accepted" // Mocking a pass for now if it didn't crash
+		} else {
+			finalGrade = execResult.Status // E.g., "Time Limit Exceeded" or "Runtime Error"
+		}
+
+		// 4. Update the Submission document in MongoDB with the final grade
+		err = app.submissions.UpdateStatus(subID, finalGrade, execResult.ExecutionTimeMs)
+		if err != nil {
+			app.logger.Error("Failed to update submission status in DB", "error", err)
+		}
+
+	}(result.InsertedID.(primitive.ObjectID), input.RawCode)
+}
+
+func (app *application) getSubmissionStatusHandler(w http.ResponseWriter, r *http.Request) {
+	idParam := r.PathValue("id")
+	objID, err := primitive.ObjectIDFromHex(idParam)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	sub, err := app.submissions.GetByID(objID)
+	if err != nil {
+		app.clientError(w, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sub)
+}
+
+func (app *application) createSessionHandler(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		LRToken string `json:"lr_token"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	// 1. Ask LoginRadius who this token belongs to
+	req, _ := http.NewRequest("GET", "https://api.loginradius.com/identity/v2/auth/account", nil)
+	req.Header.Add("Authorization", "Bearer "+input.LRToken)
+
+	apiKey := os.Getenv("LR_API_KEY")
+	req.Header.Add("X-LoginRadius-ApiKey", apiKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+
+	if err != nil || resp.StatusCode != http.StatusOK {
+		app.logger.Error("Failed to verify LoginRadius token")
+		app.clientError(w, http.StatusUnauthorized)
+		return
+	}
+	defer resp.Body.Close()
+
+	// 2. Extract the User ID and Custom Role
+	var lrProfile LRUserProfile
+	if err := json.NewDecoder(resp.Body).Decode(&lrProfile); err != nil {
+		app.serverError(w, r, err)
+		return
+	}
+
+	// Safety check: If they didn't select a role, default to Student
+	role := lrProfile.CustomFields.Role
+	if role == "" {
+		role = "Student"
+	}
+
+	// 3. Bake the Secure Cookie!
+	// We save "UserID|Role" directly inside the cookie.
+	cookieValue := fmt.Sprintf("%s|%s", lrProfile.Uid, role)
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "proctor_session",
+		Value:    cookieValue,
+		Path:     "/",
+		HttpOnly: true, // JS cannot read it (Stops hackers)
+		Secure:   true, // Requires HTTPS
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   86400, // Expires in 24 hours
+	})
+
+	// 4. Send the role back to React so it knows which dashboard to load
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Session locked in!",
+		"role":    role,
+	})
+}
+
+// 2. Restore Session
+func (app *application) getMeHandler(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("proctor_session")
+	if err != nil {
+		app.clientError(w, http.StatusUnauthorized)
+		return
+	}
+
+	// Extract the data from the cookie
+	parts := strings.Split(cookie.Value, "|")
+	if len(parts) != 2 {
+		app.clientError(w, http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"user_id": parts[0],
+		"role":    parts[1],
+	})
+}
+
+func (app *application) logoutHandler(w http.ResponseWriter, r *http.Request) {
+	// Clear the cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "proctor_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1, // Expire immediately
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Logged out successfully",
 	})
 }

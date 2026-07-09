@@ -21,7 +21,7 @@ type Exam struct {
 
 type ExamSettings struct {
 	RequireCamera     bool `bson:"require_camera" json:"require_camera"`
-	RequireMic        bool `bson:"require_mic" json:"require_mic"` 
+	RequireMic        bool `bson:"require_mic" json:"require_mic"`
 	BlockTabSwitching bool `bson:"block_tab_switching" json:"block_tab_switching"`
 	BlockCopyPaste    bool `bson:"block_copy_paste" json:"block_copy_paste"`
 }
@@ -96,7 +96,8 @@ func (m *ExamModel) GetAll() ([]Exam, error) {
 	}
 	defer cursor.Close(ctx)
 
-	var exams []Exam
+	exams := make([]Exam, 0)
+
 	if err = cursor.All(ctx, &exams); err != nil {
 		return nil, err
 	}
@@ -117,6 +118,15 @@ type SubmissionModel struct {
 	collection *mongo.Collection
 }
 
+func (m *SubmissionModel) GetByID(id primitive.ObjectID) (Submission, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var sub Submission
+	err := m.collection.FindOne(ctx, bson.M{"_id": id}).Decode(&sub)
+	return sub, err
+}
+
 func NewSubmissionModel(client *mongo.Client) *SubmissionModel {
 	return &SubmissionModel{
 		collection: client.Database("proctor").Collection("submissions"),
@@ -127,4 +137,21 @@ func (m *SubmissionModel) Insert(sub Submission) (*mongo.InsertOneResult, error)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return m.collection.InsertOne(ctx, sub)
+}
+
+// UpdateStatus modifies an existing submission with the sandbox results
+func (m *SubmissionModel) UpdateStatus(id primitive.ObjectID, status string, executionTime int64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	filter := bson.M{"_id": id}
+	update := bson.M{
+		"$set": bson.M{
+			"status":            status,
+			"execution_time_ms": executionTime,
+		},
+	}
+
+	_, err := m.collection.UpdateOne(ctx, filter, update)
+	return err
 }
