@@ -110,10 +110,14 @@ func noSurf(next http.Handler) http.Handler {
 }
 func (app *application) enableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Vary headers tell caches that the response differs based on these request headers
+		w.Header().Add("Vary", "Origin")
+		w.Header().Add("Vary", "Access-Control-Request-Method")
+
 		// 1. MUST be your exact React URL, NOT a wildcard "*"
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
 
-		// 2. NEW & CRITICAL: This explicitly tells the browser "Yes, you can send cookies"
+		// 2. CRITICAL: This explicitly tells the browser "Yes, you can send cookies"
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")

@@ -27,9 +27,9 @@ func (app *application) routes() http.Handler {
 	mux.Handle("GET /api/exams", apiChain.ThenFunc(app.getExamsHandler))
 	mux.Handle("GET /api/exams/{id}", apiChain.ThenFunc(app.getExamByIDHandler))
 
-	mux.Handle("POST /api/auth/session", apiChain.ThenFunc(app.createSessionHandler))
-	mux.Handle("GET /api/auth/me", apiChain.ThenFunc(app.getMeHandler))
-	mux.Handle("POST /api/auth/logout", apiChain.ThenFunc(app.logoutHandler))
+	mux.Handle("POST /api/auth/session", apiBase.ThenFunc(app.createSessionHandler))
+	mux.Handle("GET /api/auth/me", apiBase.ThenFunc(app.getMeHandler))
+	mux.Handle("POST /api/auth/logout", apiBase.ThenFunc(app.logoutHandler))
 	// Protected Instructor Routes (Notice the requireRole middleware appended here)
 	instructorChain := apiChain.Append(app.requireRole("Instructor"))
 	mux.Handle("POST /api/exams", instructorChain.ThenFunc(app.createExamHandler))

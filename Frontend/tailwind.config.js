@@ -7,12 +7,11 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Change this to a blue hex code like '#3b82f6' if you prefer blue over green
-        primary: '#10b981', 
-        primaryHover: '#3b82f6',
+        primary: '#10b981',       // emerald-500 — the signature green
+        primaryHover: '#34d399',  // emerald-400 — lighter green on hover
       },
       fontFamily: {
-        sans: ['Inter', 'sans-serif'], // A clean, minimalist font
+        sans: ['Inter', 'system-ui', 'sans-serif'],
       }
     },
   },

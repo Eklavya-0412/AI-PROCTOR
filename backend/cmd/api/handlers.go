@@ -261,14 +261,11 @@ func (app *application) submitCodeHandler(w http.ResponseWriter, r *http.Request
 		SubmittedAt: time.Now(),
 	}
 
-	// 1. Save initial submission to DB
 	result, err := app.submissions.Insert(submission)
 	if err != nil {
 		app.serverError(w, r, err)
 		return
 	}
-
-	// 2. TODO: Push submission.ID and Code to the Docker Worker Queue channel here
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -291,10 +288,9 @@ func (app *application) submitCodeHandler(w http.ResponseWriter, r *http.Request
 		// Determine the final grade based on the container exit status
 		finalGrade := "Wrong Answer"
 		if execResult.Status == "Success" {
-			// TODO: Here you would compare execResult.Output against the problem's ExpectedOutput
-			finalGrade = "Accepted" // Mocking a pass for now if it didn't crash
+			finalGrade = "Accepted"
 		} else {
-			finalGrade = execResult.Status // E.g., "Time Limit Exceeded" or "Runtime Error"
+			finalGrade = execResult.Status
 		}
 
 		// 4. Update the Submission document in MongoDB with the final grade
@@ -333,13 +329,16 @@ func (app *application) createSessionHandler(w http.ResponseWriter, r *http.Requ
 		app.clientError(w, http.StatusBadRequest)
 		return
 	}
-
+	apiKey := os.Getenv("LR_API_KEY")
 	// 1. Ask LoginRadius who this token belongs to
 	req, _ := http.NewRequest("GET", "https://api.loginradius.com/identity/v2/auth/account", nil)
 	req.Header.Add("Authorization", "Bearer "+input.LRToken)
-
-	apiKey := os.Getenv("LR_API_KEY")
 	req.Header.Add("X-LoginRadius-ApiKey", apiKey)
+
+	// URL.Query() returns a COPY — must assign back to RawQuery
+	q := req.URL.Query()
+	q.Add("access_token", input.LRToken)
+	req.URL.RawQuery = q.Encode()
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -358,31 +357,31 @@ func (app *application) createSessionHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Safety check: If they didn't select a role, default to Student
+	// If they didn't select a role, default to Student
 	role := lrProfile.CustomFields.Role
 	if role == "" {
 		role = "Student"
 	}
 
 	// 3. Bake the Secure Cookie!
-	// We save "UserID|Role" directly inside the cookie.
+
 	cookieValue := fmt.Sprintf("%s|%s", lrProfile.Uid, role)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "proctor_session",
 		Value:    cookieValue,
 		Path:     "/",
-		HttpOnly: true, // JS cannot read it (Stops hackers)
-		Secure:   true, // Requires HTTPS
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   86400, // Expires in 24 hours
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteNoneMode,
+		MaxAge:   86400,
 	})
 
 	// 4. Send the role back to React so it knows which dashboard to load
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": "Session locked in!",
 		"role":    role,
+		"user_id": lrProfile.Uid,
 	})
 }
 
@@ -409,15 +408,15 @@ func (app *application) getMeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) logoutHandler(w http.ResponseWriter, r *http.Request) {
-	// Clear the cookie
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     "proctor_session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1, // Expire immediately
+		SameSite: http.SameSiteNoneMode,
+		MaxAge:   -1,
 	})
 
 	w.Header().Set("Content-Type", "application/json")

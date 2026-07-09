@@ -33,7 +33,7 @@ export default function StudentDashboard() {
   useEffect(() => {
     apiCall<any>('/exams', { method: 'GET' })
       .then((data) => {
-        console.log("Antigravity Check - API Payload:", data); // Watch this in your F12 console
+        console.log(" API Payload:", data); // Watch this in your F12 console
         
         // 1. Force the data into an array, no matter what garbage the API sends
         const safeExams = Array.isArray(data) ? data : [];

@@ -65,6 +65,7 @@ func main() {
 	sessionManager := scs.New()
 	sessionManager.Lifetime = 12 * time.Hour
 	sessionManager.Cookie.Secure = true
+	sessionManager.Cookie.SameSite = http.SameSiteNoneMode
 
 	app := &application{
 		logger:         logger,
